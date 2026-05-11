@@ -206,7 +206,7 @@ if st.button("🔥 Analisar mini", use_container_width=True):
             prompt = montar_prompt(modo_analise)
 
             resposta = client.models.generate_content(
-                model="gemini-2.5-flash",
+                model="gemini-1.5-flash",
                 contents=[prompt, *imagens]
             )
 
