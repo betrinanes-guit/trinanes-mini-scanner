@@ -1,8 +1,10 @@
 import json
 import re
+import io
 import streamlit as st
 from PIL import Image
 from google import genai
+from google.genai import types
 
 st.set_page_config(
     page_title="TRINANES AI GARAGE VISION",
@@ -69,8 +71,12 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-api_key = st.secrets["GEMINI_API_KEY"]
-client = genai.Client(api_key=api_key)
+try:
+    api_key = st.secrets["GEMINI_API_KEY"]
+    client = genai.Client(api_key=api_key)
+except Exception:
+    st.error("Erro: GEMINI_API_KEY não encontrada nos Secrets do Streamlit.")
+    st.stop()
 
 st.markdown('<div class="main-card">', unsafe_allow_html=True)
 
@@ -101,20 +107,44 @@ if opcao == "📷 Usar câmera":
     elif modo_analise in ["🖼️ Expositor / coleção", "🔍 Modo automático"]:
         foto_2 = st.camera_input("Foto extra opcional")
 else:
-    foto_1 = st.file_uploader("Foto principal", type=["jpg", "jpeg", "png"])
+    foto_1 = st.file_uploader("Foto principal", type=["jpg", "jpeg", "png", "webp"])
     if modo_analise == "📦 Blister frente e verso":
-        foto_2 = st.file_uploader("Foto do verso do blister", type=["jpg", "jpeg", "png"])
+        foto_2 = st.file_uploader("Foto do verso do blister", type=["jpg", "jpeg", "png", "webp"])
     elif modo_analise in ["🖼️ Expositor / coleção", "🔍 Modo automático"]:
-        foto_2 = st.file_uploader("Foto extra opcional", type=["jpg", "jpeg", "png"])
-        foto_3 = st.file_uploader("Mais uma foto opcional", type=["jpg", "jpeg", "png"])
+        foto_2 = st.file_uploader("Foto extra opcional", type=["jpg", "jpeg", "png", "webp"])
+        foto_3 = st.file_uploader("Mais uma foto opcional", type=["jpg", "jpeg", "png", "webp"])
 
 st.markdown("</div>", unsafe_allow_html=True)
 
 
-def abrir_imagem(arquivo):
+def preparar_imagem_para_gemini(arquivo):
+    """
+    Converte qualquer imagem enviada pelo celular/notebook para JPEG RGB otimizado.
+    Isso evita erro no Streamlit Cloud com imagem do celular.
+    """
     if arquivo is None:
         return None
-    return Image.open(arquivo).convert("RGB")
+
+    try:
+        imagem = Image.open(arquivo)
+
+        if imagem.mode != "RGB":
+            imagem = imagem.convert("RGB")
+
+        imagem.thumbnail((1024, 1024))
+
+        buffer = io.BytesIO()
+        imagem.save(buffer, format="JPEG", quality=85, optimize=True)
+        buffer.seek(0)
+
+        return types.Part.from_bytes(
+            data=buffer.getvalue(),
+            mime_type="image/jpeg"
+        )
+
+    except Exception as e:
+        st.error(f"Erro ao preparar imagem: {e}")
+        return None
 
 
 def limpar_json(texto):
@@ -199,18 +229,33 @@ if st.button("🔥 Analisar mini", use_container_width=True):
             imagens = []
 
             for foto in [foto_1, foto_2, foto_3]:
-                img = abrir_imagem(foto)
-                if img:
-                    imagens.append(img)
+                imagem_pronta = preparar_imagem_para_gemini(foto)
+                if imagem_pronta:
+                    imagens.append(imagem_pronta)
+
+            if not imagens:
+                st.error("Nenhuma imagem válida foi encontrada. Tente tirar outra foto.")
+                st.stop()
 
             prompt = montar_prompt(modo_analise)
 
-            resposta = client.models.generate_content(
-                model="gemini-1.5-flash",
-                contents=[prompt, *imagens]
-            )
+            try:
+                resposta = client.models.generate_content(
+                    model="gemini-1.5-flash",
+                    contents=[prompt] + imagens,
+                    config={
+                        "temperature": 0.2,
+                        "response_mime_type": "application/json"
+                    }
+                )
 
-            texto = resposta.text.strip()
+                texto = resposta.text.strip()
+
+            except Exception as e:
+                st.error("Erro ao consultar a IA.")
+                st.info("Possíveis causas: limite da API, chave inválida, billing desativado ou imagem muito pesada.")
+                st.code(str(e))
+                st.stop()
 
             try:
                 dados = limpar_json(texto)
