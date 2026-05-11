@@ -241,7 +241,7 @@ if st.button("🔥 Analisar mini", use_container_width=True):
 
             try:
                 resposta = client.models.generate_content(
-                    model="gemini-1.5-flash",
+                    model="gemini-1.5-flash-002",
                     contents=[prompt] + imagens,
                     config={
                         "temperature": 0.2,
